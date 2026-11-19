@@ -13,6 +13,6 @@ pandas
 matplotlib
 tqdm
 pytest
-# translation (xling.translate)
-IndicTransToolkit
+# translation: IndicTrans2 needs its own environment (requirements-translate.txt);
+# sentence-transformers here is for the NLLB fallback (xling.translate --engine nllb)
 sentence-transformers

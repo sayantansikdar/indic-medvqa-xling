@@ -7,8 +7,12 @@ and Indic -> English translate-test (baseline B1).
   # ArogyaBodha translate-test: fill hi-tt, ... from the pure Indic text
   python -m xling.translate backward --items runs/data/arogyabodha.jsonl --from-variant pure --split test
 
-Needs `pip install IndicTransToolkit sentence-transformers` and accepted terms for the
-ai4bharat/indictrans2-* models on Hugging Face.
+Engines:
+  indictrans2 (default)  ai4bharat/indictrans2-*-1B. Its remote model code breaks on transformers >= 4.54
+                         and IndicTransToolkit breaks on transformers 5, so run this module in a separate
+                         environment with transformers==4.53.3 (the Colab notebook sets one up).
+  nllb                   facebook/nllb-200-distilled-1.3B. Native in transformers 5, not gated; lower
+                         quality on Indic languages, so use it only if IndicTrans2 cannot be run.
 """
 from __future__ import annotations
 
@@ -21,6 +25,14 @@ from .common import IT2_TAG, TARGET_LANGS, condition_name, read_jsonl, write_jso
 
 EN_INDIC = "ai4bharat/indictrans2-en-indic-1B"
 INDIC_EN = "ai4bharat/indictrans2-indic-en-1B"
+NLLB = "facebook/nllb-200-distilled-1.3B"
+ENGINE = "indictrans2"  # set from --engine
+
+
+def _dtype_kw(dtype):
+    import transformers
+
+    return {"dtype": dtype} if int(transformers.__version__.split(".")[0]) >= 5 else {"torch_dtype": dtype}
 
 
 class Translator:
@@ -30,7 +42,7 @@ class Translator:
 
         self.tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name, trust_remote_code=True, dtype=torch.float16
+            model_name, trust_remote_code=True, **_dtype_kw(torch.float16)
         ).to(device).eval()
         self.ip = IndicProcessor(inference=True)
         self.device = device
@@ -48,6 +60,42 @@ class Translator:
         return out
 
 
+class NLLBTranslator:
+    """Same interface as Translator; one model serves both directions. NLLB uses the same
+    language tags as IndicTrans2 (eng_Latn, hin_Deva, ben_Beng, tam_Taml, tel_Telu)."""
+
+    _shared = None
+
+    def __init__(self, model_name: str = NLLB, device: str | None = None):
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if NLLBTranslator._shared is None:
+            tok = AutoTokenizer.from_pretrained(model_name)
+            dtype = torch.float16 if device == "cuda" else torch.float32
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_name, **_dtype_kw(dtype)).to(device).eval()
+            NLLBTranslator._shared = (tok, model)
+        self.tok, self.model = NLLBTranslator._shared
+        self.device = device
+
+    @torch.no_grad()
+    def __call__(self, sents: list[str], src: str, tgt: str, batch_size: int = 32, num_beams: int = 5) -> list[str]:
+        out: list[str] = []
+        self.tok.src_lang = IT2_TAG[src]
+        bos = self.tok.convert_tokens_to_ids(IT2_TAG[tgt])
+        for i in range(0, len(sents), batch_size):
+            enc = self.tok(sents[i : i + batch_size], truncation=True, padding="longest", return_tensors="pt").to(self.device)
+            gen = self.model.generate(**enc, forced_bos_token_id=bos, max_length=256, num_beams=num_beams)
+            out.extend(self.tok.batch_decode(gen, skip_special_tokens=True))
+        return out
+
+
+def make_translator(direction: str):
+    if ENGINE == "nllb":
+        return NLLBTranslator()
+    return Translator(EN_INDIC if direction == "en-indic" else INDIC_EN)
+
+
 def _segments(item: dict, cond: str) -> list[str]:
     t = item["text"][cond]
     return [t["question"]] + [t["options"][L] for L in item["letters"]]
@@ -57,7 +105,7 @@ def _assemble(item: dict, segs: list[str]) -> dict:
     return {"question": segs[0], "options": dict(zip(item["letters"], segs[1:]))}
 
 
-def forward(items: list[dict], threshold: float, glossary: list[str]) -> list[dict]:
+def forward(items: list[dict], threshold: float, glossary: list[str], save=lambda: None) -> list[dict]:
     """Translate question + options to each target language. The back-translated *question* must reach
     LaBSE similarity >= threshold and keep every glossary term; otherwise that item's <lang>-mt
     condition is left out (the item stays for the other conditions)."""
@@ -65,12 +113,15 @@ def forward(items: list[dict], threshold: float, glossary: list[str]) -> list[di
 
     from .data import YES_NO
 
-    fwd = Translator(EN_INDIC)
-    bwd = Translator(INDIC_EN)
+    fwd = make_translator("en-indic")
+    bwd = make_translator("indic-en")
     labse = SentenceTransformer("sentence-transformers/LaBSE", device="cuda")
     questions = [it["text"]["en"]["question"] for it in items]
     q_emb = labse.encode(questions, convert_to_tensor=True)
     for lang in TARGET_LANGS:
+        if items and all(lang in it.get("qc", {}) for it in items):
+            print(f"{lang}: already translated, skipping")
+            continue
         flat, index = [], []
         for i, it in enumerate(items):
             # yes/no options use fixed translations; everything else goes through MT
@@ -85,7 +136,7 @@ def forward(items: list[dict], threshold: float, glossary: list[str]) -> list[di
         for (i, start, n), it in zip(index, items):
             lost = [g for g in glossary if g in questions[i].lower() and g not in back[i].lower()]
             ok = float(sim[i]) >= threshold and not lost
-            it.setdefault("qc", {})[lang] = {"backtranslation": back[i], "labse": round(float(sim[i]), 4), "lost_terms": lost, "pass": ok}
+            it.setdefault("qc", {})[lang] = {"backtranslation": back[i], "labse": round(float(sim[i]), 4), "lost_terms": lost, "pass": ok, "engine": ENGINE}
             if not ok:
                 continue
             n_ok += 1
@@ -96,11 +147,12 @@ def forward(items: list[dict], threshold: float, glossary: list[str]) -> list[di
                 t = _assemble(it, out[start : start + n])
             it["text"][condition_name(lang, "mt")] = t
         print(f"{lang}: {n_ok}/{len(items)} items pass the back-translation filter (LaBSE >= {threshold})")
+        save()
     return items
 
 
 def backward(items: list[dict], from_variant: str) -> list[dict]:
-    bwd = Translator(INDIC_EN)
+    bwd = make_translator("indic-en")
     for lang in TARGET_LANGS:
         src = condition_name(lang, from_variant)
         flat, index = [], []
@@ -125,14 +177,17 @@ def main() -> None:
     ap.add_argument("--from-variant", default="pure")
     ap.add_argument("--threshold", type=float, default=0.80)
     ap.add_argument("--glossary", type=Path, help="one clinical term per line; items losing one are dropped")
+    ap.add_argument("--engine", choices=["indictrans2", "nllb"], default="indictrans2")
     args = ap.parse_args()
+    global ENGINE
+    ENGINE = args.engine
 
     items = read_jsonl(args.items)
     sel = [it for it in items if args.split is None or it["split"] == args.split]
     rest = [it for it in items if not (args.split is None or it["split"] == args.split)]
     if args.direction == "forward":
         glossary = [g.strip().lower() for g in args.glossary.read_text().splitlines() if g.strip()] if args.glossary else []
-        sel = forward(sel, args.threshold, glossary)
+        sel = forward(sel, args.threshold, glossary, save=lambda: write_jsonl(args.out or args.items, rest + sel))
     else:
         sel = backward(sel, args.from_variant)
     write_jsonl(args.out or args.items, rest + sel)

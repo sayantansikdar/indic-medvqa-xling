@@ -1,0 +1,7 @@
+# Translation-only environment (see the Colab notebook, section 4).
+# IndicTrans2's remote model code breaks on transformers >= 4.54; IndicTransToolkit breaks on transformers 5.
+transformers==4.53.3
+IndicTransToolkit==1.1.1
+sentence-transformers>=3,<5
+sentencepiece
+sacremoses
