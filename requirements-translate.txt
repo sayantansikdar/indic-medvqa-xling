@@ -1,6 +1,7 @@
 # Translation-only environment (see the Colab notebook, section 4).
+# Install ONLY into the separate env:  uv pip install --python /content/it2env/bin/python torch==2.7.1 -r requirements-translate.txt
+# Never `pip install -r` this into Colab's main Python: it would downgrade transformers.
 # IndicTrans2's remote model code breaks on transformers >= 4.54; IndicTransToolkit breaks on transformers 5.
-torch==2.7.1
 transformers==4.53.3
 IndicTransToolkit==1.1.1
 sentence-transformers>=3,<5
