@@ -28,6 +28,7 @@ def conditions_of(items: list[dict], wanted: list[str] | None) -> list[str]:
     return [c for c in avail if wanted is None or c in wanted]
 
 
+@torch.no_grad()
 def run_condition(vlm, items, cond, data_dir, args, steer_vec=None):
     capture = args.capture
     L = vlm.n_layers
@@ -78,6 +79,7 @@ def run_condition(vlm, items, cond, data_dir, args, steer_vec=None):
     return preds, resid, lens_p, lens_top, var
 
 
+@torch.no_grad()
 def fidelity_probe(vlm, items, cond, data_dir, n, max_new_tokens=48):
     """Response-language fidelity: free reply to the question without the letter instruction."""
     lang = cond.split("-")[0]

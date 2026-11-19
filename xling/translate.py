@@ -30,7 +30,7 @@ class Translator:
 
         self.tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name, trust_remote_code=True, torch_dtype=torch.float16
+            model_name, trust_remote_code=True, dtype=torch.float16
         ).to(device).eval()
         self.ip = IndicProcessor(inference=True)
         self.device = device

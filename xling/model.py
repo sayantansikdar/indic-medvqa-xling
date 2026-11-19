@@ -44,7 +44,7 @@ def load(name: str, quant: str = "none", attn: str = "sdpa", adapter: str | None
     if not torch.cuda.is_bf16_supported():
         # Gemma 3 overflows in fp16 (inf/NaN activations); T4/P100/V100 are not usable for it.
         raise RuntimeError("This GPU has no bf16 support. Use an L4 or A100 runtime.")
-    kwargs = dict(torch_dtype=torch.bfloat16, attn_implementation=attn, device_map="cuda")
+    kwargs = dict(dtype=torch.bfloat16, attn_implementation=attn, device_map="cuda")
     if quant == "4bit":
         from transformers import BitsAndBytesConfig
 
@@ -64,6 +64,7 @@ def load(name: str, quant: str = "none", attn: str = "sdpa", adapter: str | None
         from peft import PeftModel
 
         model = PeftModel.from_pretrained(model, adapter)
+    model.requires_grad_(False)  # inference/analysis only; xling.train attaches trainable LoRA weights itself
     model.eval()
     return VLM(model, processor)
 
