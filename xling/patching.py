@@ -75,6 +75,7 @@ def main() -> None:
     ap.add_argument("--modes", default="resid,attn,mlp,win4,win6,win8,ctl-win6")
     ap.add_argument("--preds", type=Path, help="base infer run dir (default runs/<model>/<dataset>/<split>/base)")
     ap.add_argument("--max-items", type=int, default=200)
+    ap.add_argument("--exclude-sources", default="", help="comma-separated item sources to leave out, e.g. MedXpertQA_MM_test")
     ap.add_argument("--batch", type=int, default=12)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path)
@@ -93,7 +94,9 @@ def main() -> None:
     for cond in args.conds.split(","):
         tg_pred = {p["id"]: p for p in read_jsonl(pred_dir / f"preds_{cond}.jsonl")}
         # Items the model gets right in English and wrong in the target language
-        ids = [i for i in tg_pred if en_pred[i]["pred"] == en_pred[i]["gold"] and tg_pred[i]["pred"] != tg_pred[i]["gold"]]
+        excluded = set(filter(None, args.exclude_sources.split(",")))
+        ids = [i for i in tg_pred if en_pred[i]["pred"] == en_pred[i]["gold"] and tg_pred[i]["pred"] != tg_pred[i]["gold"]
+               and items[i].get("source") not in excluded]
         random.Random(args.seed).shuffle(ids)
         ids = ids[: args.max_items]
         print(f"{cond}: patching {len(ids)} items (EN correct, {cond} wrong)")

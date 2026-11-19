@@ -14,8 +14,9 @@ from .common import read_jsonl
 from .stats import bootstrap_ci, ece, gap_recovery_ratio, holm, mcnemar
 
 
-def load_preds(d: Path) -> dict[str, dict[str, dict]]:
-    return {p.stem.removeprefix("preds_"): {r["id"]: r for r in read_jsonl(p)} for p in sorted(d.glob("preds_*.jsonl"))}
+def load_preds(d: Path, exclude: set[str] = frozenset()) -> dict[str, dict[str, dict]]:
+    return {p.stem.removeprefix("preds_"): {r["id"]: r for r in read_jsonl(p) if r.get("source") not in exclude}
+            for p in sorted(d.glob("preds_*.jsonl"))}
 
 
 def summarise(run: dict, base: dict | None):
@@ -71,18 +72,21 @@ def main() -> None:
     ap.add_argument("--root", type=Path, required=True, help="runs/<model>/<dataset>/<split>")
     ap.add_argument("--base", default="base")
     ap.add_argument("--runs", default="", help="comma-separated run tags to compare against --base")
+    ap.add_argument("--exclude-sources", default="", help="comma-separated item sources to leave out")
     args = ap.parse_args()
+    exclude = set(filter(None, args.exclude_sources.split(",")))
+    suffix = "_excl-" + "-".join(sorted(exclude)) if exclude else ""
 
-    base = load_preds(args.root / args.base)
+    base = load_preds(args.root / args.base, exclude)
     md = [fmt(summarise(base, None), f"{args.base} (zero-shot)")]
     all_rows = [{"run": args.base, **r} for r in summarise(base, None)]
     for tag in filter(None, args.runs.split(",")):
-        rows = summarise(load_preds(args.root / tag), base)
+        rows = summarise(load_preds(args.root / tag, exclude), base)
         md.append(fmt(rows, tag))
         all_rows += [{"run": tag, **r} for r in rows]
-    (args.root / "report.md").write_text("\n".join(md))
+    (args.root / f"report{suffix}.md").write_text("\n".join(md))
     keys = sorted({k for r in all_rows for k in r}, key=lambda k: (k != "run", k != "cond", k))
-    with open(args.root / "report.csv", "w", newline="") as f:
+    with open(args.root / f"report{suffix}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         w.writerows(all_rows)
