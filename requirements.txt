@@ -1,0 +1,18 @@
+# torch comes preinstalled on Colab (CUDA build); do not reinstall it there.
+transformers>=5.0,<6
+accelerate>=1.0
+peft>=0.17
+bitsandbytes>=0.45
+datasets>=3.0
+huggingface_hub
+pillow
+numpy
+scipy
+scikit-learn
+pandas
+matplotlib
+tqdm
+pytest
+# translation (xling.translate)
+IndicTransToolkit
+sentence-transformers
