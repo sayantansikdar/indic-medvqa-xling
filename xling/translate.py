@@ -37,6 +37,15 @@ def _dtype_kw(dtype):
 
 class Translator:
     def __init__(self, model_name: str, device: str = "cuda"):
+        import transformers
+
+        major, minor = map(int, transformers.__version__.split(".")[:2])
+        if (major, minor) >= (4, 54):
+            raise RuntimeError(
+                f"IndicTrans2 needs transformers < 4.54 but this Python ({__import__('sys').executable}) has "
+                f"{transformers.__version__}. Run xling.translate with the separate translation environment "
+                "(Colab notebook, section 4), or use --engine nllb."
+            )
         from IndicTransToolkit.processor import IndicProcessor
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
