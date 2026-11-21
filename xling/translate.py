@@ -26,6 +26,11 @@ from .common import IT2_TAG, TARGET_LANGS, condition_name, read_jsonl, write_jso
 EN_INDIC = "ai4bharat/indictrans2-en-indic-1B"
 INDIC_EN = "ai4bharat/indictrans2-indic-en-1B"
 NLLB = "facebook/nllb-200-distilled-1.3B"
+# Pinned so every split is translated by the same model code and weights (recorded 21 Nov 2026).
+IT2_REVISION = {
+    EN_INDIC: "89cd0007fd7b9e0693a2fd4404d187e07dac79fd",
+    INDIC_EN: "ac3daf0ecd37be3b6957764a9179ab2b07fa9d6a",
+}
 ENGINE = "indictrans2"  # set from --engine
 
 
@@ -49,9 +54,10 @@ class Translator:
         from IndicTransToolkit.processor import IndicProcessor
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        self.tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        rev = IT2_REVISION.get(model_name)
+        self.tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, revision=rev)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name, trust_remote_code=True, **_dtype_kw(torch.float16)
+            model_name, trust_remote_code=True, revision=rev, **_dtype_kw(torch.float16)
         ).to(device).eval()
         self.ip = IndicProcessor(inference=True)
         self.device = device
