@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from xling.band import recovery, select_band
-from xling.common import script_share, write_jsonl
+from xling.common import from_bf16_bits, resid_path, script_share, to_bf16_bits, write_jsonl
 from xling.data import split_of, strip_gloss
 from xling.stats import ece, gap_recovery_ratio, holm, linear_cka, mcnemar
 
@@ -86,7 +86,7 @@ def test_diagnose_end_to_end(tmp_path, monkeypatch):
                 x[:, 3:5] += rng.normal(scale=3.0, size=(N, 2, d))
             keep = [i for i in range(N) if not (c == "ta-pure" and i in (5, 17))]  # filtered items, as with MT
             x, lens_n = x[keep], len(keep)
-            np.save(D / f"resid_{c}.npy", x.astype(np.float16))
+            np.save(resid_path(D, c), to_bf16_bits(x))
             np.savez(D / f"lens_{c}.npz", p_gold=rng.random((lens_n, L)), top_is_gold=rng.random((lens_n, L)) > 0.5)
             np.save(D / f"var_{c}.npy", rng.random((lens_n, L)))
             write_jsonl(D / f"preds_{c}.jsonl", [{"id": f"i{i}", "gold": gold[i], "pred": gold[i] if rng.random() < 0.6 else "A"} for i in keep])
@@ -98,3 +98,10 @@ def test_diagnose_end_to_end(tmp_path, monkeypatch):
     drift = {int(r["layer"]): float(r["value"]) for r in rows if r["metric"] == "drift_centred" and r["cond"] == "hi-pure"}
     assert max(drift, key=drift.get) in (3, 4) and drift[0] < 1e-3
     assert set(np.load(tmp_path / "calib" / "steer_pure.npz").files) == {"hi-pure", "bn-pure", "ta-pure", "te-pure"}
+
+
+def test_bf16_cache_keeps_large_activations():
+    x = np.array([[1.0, -3.5, 7e4, -2e5, 1e-3]], dtype=np.float32)  # beyond fp16's 65,504
+    y = from_bf16_bits(to_bf16_bits(x))
+    assert np.isfinite(y).all()
+    np.testing.assert_allclose(y, x, rtol=1 / 128)

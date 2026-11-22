@@ -18,16 +18,36 @@ from pathlib import Path
 
 import numpy as np
 
-from .common import FAMILY, read_jsonl
+from .common import FAMILY, from_bf16_bits, read_jsonl, resid_path
 from .stats import bootstrap_ci, linear_cka
+
+
+def ensure_resid(d: Path, conds: list[str]) -> None:
+    """Re-cache residuals (GPU, SDPA, no attention maps) for conditions whose bf16 cache is missing.
+    Earlier caches were fp16, which overflows on Gemma 3's largest activations."""
+    missing = [c for c in conds if not resid_path(d, c).exists()]
+    if not missing:
+        return
+    import json
+    import subprocess
+    import sys
+
+    cfg = json.loads((d / "config.json").read_text())
+    cmd = [sys.executable, "-m", "xling.infer", "--model", cfg["model"], "--items", cfg["items"],
+           "--split", cfg["split"], "--conds", ",".join(missing), "--resid-only", "--out", str(d)]
+    if cfg.get("data_dir"):
+        cmd += ["--data-dir", cfg["data_dir"]]
+    print(f"re-caching residuals in bf16 for {missing} ({d}) - needs the GPU")
+    subprocess.run(cmd, check=True)
 
 
 def load_run(d: Path, conds: list[str]):
     """Load caches and keep only items present in every condition (the back-translation filter
     drops a few items per language), in English order, so row i is the same item everywhere."""
+    ensure_resid(d, conds)
     R, P, lens, var = {}, {}, {}, {}
     for c in conds:
-        R[c] = np.load(d / f"resid_{c}.npy", mmap_mode="r")
+        R[c] = np.load(resid_path(d, c), mmap_mode="r")
         P[c] = read_jsonl(d / f"preds_{c}.jsonl")
         z = np.load(d / f"lens_{c}.npz")
         lens[c] = (z["p_gold"], z["top_is_gold"])
@@ -37,7 +57,8 @@ def load_run(d: Path, conds: list[str]):
     for c in conds:
         pos = {p["id"]: i for i, p in enumerate(P[c])}
         idx = np.array([pos[i] for i in common])
-        R[c] = np.asarray(R[c][idx])
+        R[c] = from_bf16_bits(R[c][idx])
+        assert np.isfinite(R[c]).all(), f"non-finite values in the residual cache for {c}"
         P[c] = [P[c][i] for i in idx]
         lens[c] = (lens[c][0][idx], lens[c][1][idx])
         var[c] = var[c][idx]

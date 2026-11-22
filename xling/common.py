@@ -79,3 +79,24 @@ def script_share(text: str, lang: str) -> float:
 
 def condition_name(lang: str, variant: str) -> str:
     return "en" if lang == "en" else f"{lang}-{variant}"
+
+
+def resid_path(run_dir, cond: str) -> Path:
+    """Residual cache: bf16 bit patterns stored as uint16. fp16 is NOT usable for Gemma 3, whose
+    residual stream has activations beyond fp16's maximum (65,504) that would become inf."""
+    return Path(run_dir) / f"resid_{cond}.bf16.npy"
+
+
+def to_bf16_bits(x):
+    """float32 array -> uint16 bf16 bit patterns (round to nearest even)."""
+    import numpy as np
+
+    u = np.ascontiguousarray(x, dtype=np.float32).view(np.uint32)
+    return ((u + 0x7FFF + ((u >> 16) & 1)) >> 16).astype(np.uint16)
+
+
+def from_bf16_bits(b):
+    """uint16 bf16 bit patterns -> float32 array (exact)."""
+    import numpy as np
+
+    return (np.asarray(b).astype(np.uint32) << 16).view(np.float32)

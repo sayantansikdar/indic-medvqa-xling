@@ -2,7 +2,7 @@
 
 For every item and condition it records the option-letter distribution at the first answer
 position. With --capture it also stores, per decoder layer at the final input position:
-  resid  pre-norm residual stream after the layer           -> resid_<cond>.npy  (N, L, d) fp16
+  resid  pre-norm residual stream after the layer           -> resid_<cond>.bf16.npy (N, L, d) bf16 bits
   lens   logit-lens P(gold) over the option letters          -> lens_<cond>.npz
   VAR    attention mass from the final position to the image -> var_<cond>.npy   (N, L)
 
@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from .common import RUNS_DIR, read_jsonl, script_share, write_jsonl
+from .common import RUNS_DIR, read_jsonl, resid_path, script_share, write_jsonl
 from .model import capture_final, load, load_image, steer
 
 
@@ -67,7 +67,7 @@ def run_condition(vlm, items, cond, data_dir, args, steer_vec=None):
         preds.append(rec)
         if capture:
             hs = torch.stack([h[0] for h in store["resid"]])  # (L, d) pre-norm layer outputs, final position
-            resid.append(hs.to(torch.float16).cpu().numpy())
+            resid.append(hs.to(torch.bfloat16).view(torch.int16).cpu().numpy().view(np.uint16))
             g = letters.index(it["gold"])
             lens_logits = vlm.lens_letter_logits(hs[:-1], letters)  # layers 0..L-2, pre-norm
             lp = torch.softmax(lens_logits, -1)
@@ -77,6 +77,20 @@ def run_condition(vlm, items, cond, data_dir, args, steer_vec=None):
             att = torch.stack([a[0, :, -1, :] for a in out.attentions])  # (L, H, T)
             var.append(att[:, :, img].sum(-1).mean(-1).float().cpu().numpy())
     return preds, resid, lens_p, lens_top, var
+
+
+@torch.no_grad()
+def cache_resid(vlm, items, cond, data_dir, args):
+    """Final-position pre-norm residual after every layer, as bf16 bits (uint16), SDPA attention."""
+    out = []
+    for it in tqdm(items, desc=f"resid {cond}", leave=False):
+        t = it["text"][cond]
+        inputs = vlm.build(load_image(data_dir, it["image"]), vlm.prompt_text(t["question"], t["options"], it["letters"], args.instruction))
+        with capture_final(vlm, ["resid"]) as store:
+            vlm.model(**inputs, use_cache=False)
+        hs = torch.stack([h[0] for h in store["resid"]])
+        out.append(hs.to(torch.bfloat16).view(torch.int16).cpu().numpy().view(np.uint16))
+    return out
 
 
 @torch.no_grad()
@@ -104,6 +118,7 @@ def main() -> None:
     ap.add_argument("--conds", help="comma-separated, e.g. en,hi-pure,ta-pure (default: all in the file)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--capture", action="store_true", help="store residuals, lens and visual attention (eager attention)")
+    ap.add_argument("--resid-only", action="store_true", help="(re)cache residuals only; predictions are left untouched")
     ap.add_argument("--instruction", default="letter")
     ap.add_argument("--quant", default="none", choices=["none", "4bit"])
     ap.add_argument("--adapter")
@@ -127,12 +142,26 @@ def main() -> None:
     def finished(cond):
         n = sum(cond in it["text"] for it in items)
         pred_path = out / f"preds_{cond}.jsonl"
-        return pred_path.exists() and len(read_jsonl(pred_path)) == n and (not args.capture or (out / f"resid_{cond}.npy").exists())
+        if args.resid_only:
+            return resid_path(out, cond).exists()
+        return pred_path.exists() and len(read_jsonl(pred_path)) == n and (not args.capture or resid_path(out, cond).exists())
 
     if all(finished(c) for c in conds):
         print(f"[skip] all conditions already done in {out}")
         return
     vlm = load(args.model, quant=args.quant, attn="eager" if args.capture else "sdpa", adapter=args.adapter)
+    if args.resid_only:
+        for cond in conds:
+            if finished(cond):
+                print(f"[skip] {cond} residuals already cached")
+                continue
+            its = [it for it in items if cond in it["text"]]
+            np.save(resid_path(out, cond), np.stack(cache_resid(vlm, its, cond, data_dir, args)))
+            old_fp16 = out / f"resid_{cond}.npy"  # superseded: fp16 overflowed to inf on Gemma 3
+            if old_fp16.exists():
+                old_fp16.unlink()
+            print(f"{cond:>10}: cached residuals for {len(its)} items")
+        return
     steer_vecs = np.load(args.steer_file) if args.steer_file else None
     (out / "config.json").write_text(json.dumps({**vars(args), "conds": conds, "n_items": len(items), "n_layers": vlm.n_layers}, default=str, indent=2))
 
@@ -153,7 +182,7 @@ def main() -> None:
         if mass < 0.5:
             print("  WARNING: <50% of probability is on option letters; the model wants to emit something else first.")
         if args.capture:
-            np.save(out / f"resid_{cond}.npy", np.stack(resid))
+            np.save(resid_path(out, cond), np.stack(resid))
             np.savez(out / f"lens_{cond}.npz", p_gold=np.stack(lens_p), top_is_gold=np.stack(lens_top))
             np.save(out / f"var_{cond}.npy", np.stack(var))
         if args.fidelity and cond != "en":
