@@ -43,9 +43,9 @@ def run_condition(vlm, items, cond, data_dir, args, steer_vec=None):
             if steer_vec is not None:
                 start = int(img.nonzero().max()) + 1 if img.any() else 0
                 with steer(vlm, args.steer_layer, steer_vec, args.steer_alpha, start):
-                    out = vlm.model(**inputs, use_cache=False, output_attentions=capture)
+                    out = vlm.model(**inputs, use_cache=False, logits_to_keep=1, output_attentions=capture)
             else:
-                out = vlm.model(**inputs, use_cache=False, output_attentions=capture)
+                out = vlm.model(**inputs, use_cache=False, logits_to_keep=1, output_attentions=capture)
         last = out.logits[0, -1]
         ll = vlm.letter_logits(last, letters)
         probs = torch.softmax(ll, -1)
@@ -87,7 +87,7 @@ def cache_resid(vlm, items, cond, data_dir, args):
         t = it["text"][cond]
         inputs = vlm.build(load_image(data_dir, it["image"]), vlm.prompt_text(t["question"], t["options"], it["letters"], args.instruction))
         with capture_final(vlm, ["resid"]) as store:
-            vlm.model(**inputs, use_cache=False)
+            vlm.model(**inputs, use_cache=False, logits_to_keep=1)
         hs = torch.stack([h[0] for h in store["resid"]])
         out.append(hs.to(torch.bfloat16).view(torch.int16).cpu().numpy().view(np.uint16))
     return out

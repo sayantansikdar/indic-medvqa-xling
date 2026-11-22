@@ -78,6 +78,18 @@ def main() -> None:
         if "ctl-win6" in s["curves"] and "win6" in s["curves"]:
             print(f"{'':>12}  win6 max R={max(s['curves']['win6']['R']):.2f}  vs mismatched-donor control max R={max(s['curves']['ctl-win6']['R']):.2f}")
 
+    # recovery curves (every 2nd layer / window start) for the pooled and family groups
+    for g in ("pooled", "indo-aryan", "dravidian"):
+        cv = summary.get(g, {}).get("curves", {})
+        if not cv:
+            continue
+        print(f"\n{g}: recovery R by layer (window modes: by window start)")
+        names = [m for m in ("resid", "attn", "mlp", "win4", "win6", "win8", "ctl-win6", "rev-win6") if m in cv]
+        n = max(len(cv[m]["R"]) for m in names)
+        print("layer " + " ".join(f"{m:>8}" for m in names))
+        for l in range(0, n, 2):
+            print(f"{l:>5} " + " ".join(f"{cv[m]['R'][l]:>8.2f}" if l < len(cv[m]["R"]) else f"{'':>8}" for m in names))
+
     if args.plot:
         import matplotlib.pyplot as plt
 

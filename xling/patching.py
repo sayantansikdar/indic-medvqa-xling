@@ -60,7 +60,7 @@ def run_mode(vlm, inputs, mode, donors, letters, gold, batch):
         sub = {k: {r - lo: v for r, v in m.items() if lo <= r < hi} for k, m in plan.items()}
         sub = {k: m for k, m in sub.items() if m}
         with torch.no_grad(), patch_final(vlm, sub):
-            logits = vlm.model(**vlm.repeat(inputs, hi - lo), use_cache=False).logits[:, -1]
+            logits = vlm.model(**vlm.repeat(inputs, hi - lo), use_cache=False, logits_to_keep=1).logits[:, -1]
         out.extend(gold_prob(vlm, logits, letters, gold).float().cpu().tolist())
     return rows, out
 
@@ -105,18 +105,17 @@ def main() -> None:
         prev_en_donors = None
         with open(path, "a", encoding="utf-8") as f:
             for iid in tqdm(ids, desc=cond):
+                if iid in done:
+                    continue
                 it = items[iid]
                 letters, gold = it["letters"], it["gold"]
                 image = load_image(data_dir, it["image"])
                 build = lambda c: vlm.build(image, vlm.prompt_text(it["text"][c]["question"], it["text"][c]["options"], letters))
                 en_in, tg_in = build("en"), build(cond)
                 with torch.no_grad(), capture_final(vlm, ["resid", "attn", "mlp"]) as en_d:
-                    p_en = float(gold_prob(vlm, vlm.model(**en_in, use_cache=False).logits[0, -1], letters, gold))
+                    p_en = float(gold_prob(vlm, vlm.model(**en_in, use_cache=False, logits_to_keep=1).logits[0, -1], letters, gold))
                 with torch.no_grad(), capture_final(vlm, ["resid", "attn", "mlp"]) as tg_d:
-                    p_tg = float(gold_prob(vlm, vlm.model(**tg_in, use_cache=False).logits[0, -1], letters, gold))
-                if iid in done:
-                    prev_en_donors = en_d
-                    continue
+                    p_tg = float(gold_prob(vlm, vlm.model(**tg_in, use_cache=False, logits_to_keep=1).logits[0, -1], letters, gold))
                 rec = {"id": iid, "cond": cond, "source": it.get("source"), "p_en": p_en, "p_tg": p_tg, "modes": {}}
                 for mode in modes:
                     if mode.startswith("ctl-"):

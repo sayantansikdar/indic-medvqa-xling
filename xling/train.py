@@ -136,7 +136,7 @@ def main() -> None:
     if lam > 0:
         for it in tqdm({it["id"]: it for it, _ in pairs}.values(), desc="EN anchors"):
             with torch.no_grad(), capture_final(vlm, ["resid"]) as st:
-                vlm.model(**build(it, "en"), use_cache=False)
+                vlm.model(**build(it, "en"), use_cache=False, logits_to_keep=1)
             anchors[it["id"]] = torch.stack([st["resid"][l][0] for l in align]).cpu()
 
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -173,7 +173,7 @@ def main() -> None:
     for step in tqdm(range(n_steps), desc="train"):
         it, cond = pairs[step % len(pairs)]
         target = torch.tensor([vlm.letter_ids[it["gold"]][0]], device=vlm.device)
-        out = model(**build(it, cond), use_cache=False)
+        out = model(**build(it, cond), use_cache=False, logits_to_keep=1)
         ce_tg = F.cross_entropy(out.logits[:, -1].float(), target)
         loss = ce_tg
         if lam > 0:
@@ -183,7 +183,7 @@ def main() -> None:
             loss = loss + lam * al
             log["align"] += float(al)
         if args.en_weight > 0:
-            out_en = model(**build(it, "en"), use_cache=False)
+            out_en = model(**build(it, "en"), use_cache=False, logits_to_keep=1)
             ce_en = F.cross_entropy(out_en.logits[:, -1].float(), target)
             loss = loss + args.en_weight * ce_en
             log["ce_en"] += float(ce_en)

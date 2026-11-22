@@ -36,6 +36,9 @@ INSTRUCTIONS = {
 
 
 def load(name: str, quant: str = "none", attn: str = "sdpa", adapter: str | None = None) -> "VLM":
+    import os
+
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # before the first CUDA allocation
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
     model_id = MODELS.get(name, name)
