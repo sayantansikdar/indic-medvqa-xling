@@ -124,6 +124,9 @@ def forward(items: list[dict], threshold: float, glossary: list[str], save=lambd
     """Translate question + options to each target language. The back-translated *question* must reach
     LaBSE similarity >= threshold and keep every glossary term; otherwise that item's <lang>-mt
     condition is left out (the item stays for the other conditions)."""
+    if items and all(lang in it.get("qc", {}) for it in items for lang in TARGET_LANGS):
+        print("forward translation already done for all languages, skipping")
+        return items
     from sentence_transformers import SentenceTransformer, util
 
     from .data import YES_NO
@@ -166,9 +169,19 @@ def forward(items: list[dict], threshold: float, glossary: list[str], save=lambd
     return items
 
 
-def backward(items: list[dict], from_variant: str) -> list[dict]:
+def backward(items: list[dict], from_variant: str, save=lambda: None) -> list[dict]:
+    def done(lang):
+        src, dst = condition_name(lang, from_variant), condition_name(lang, "tt")
+        return all(dst in it["text"] for it in items if src in it["text"])
+
+    if all(done(lang) for lang in TARGET_LANGS):
+        print("translate-test already done for all languages, skipping")
+        return items
     bwd = make_translator("indic-en")
     for lang in TARGET_LANGS:
+        if done(lang):
+            print(f"{lang}: translate-test already done, skipping")
+            continue
         src = condition_name(lang, from_variant)
         flat, index = [], []
         for i, it in enumerate(items):
@@ -180,6 +193,8 @@ def backward(items: list[dict], from_variant: str) -> list[dict]:
         out = bwd(flat, lang, "en")
         for i, start, n in index:
             items[i]["text"][condition_name(lang, "tt")] = _assemble(items[i], out[start : start + n])
+        print(f"{lang}: translate-test done for {len(index)} items")
+        save()
     return items
 
 
@@ -204,7 +219,7 @@ def main() -> None:
         glossary = [g.strip().lower() for g in args.glossary.read_text().splitlines() if g.strip()] if args.glossary else []
         sel = forward(sel, args.threshold, glossary, save=lambda: write_jsonl(args.out or args.items, rest + sel))
     else:
-        sel = backward(sel, args.from_variant)
+        sel = backward(sel, args.from_variant, save=lambda: write_jsonl(args.out or args.items, rest + sel))
     write_jsonl(args.out or args.items, rest + sel)
 
 

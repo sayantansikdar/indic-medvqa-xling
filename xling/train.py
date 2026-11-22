@@ -103,6 +103,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
+    if (args.out / "adapter_config.json").exists():
+        print(f"[skip] adapter already trained: {args.out}")
+        return
     set_seed(args.seed)
     args.out.mkdir(parents=True, exist_ok=True)
     data_dir = args.data_dir or args.items.parent

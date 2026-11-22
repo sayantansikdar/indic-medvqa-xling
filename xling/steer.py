@@ -31,6 +31,10 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=200)
     args = ap.parse_args()
 
+    out = args.vectors.parent / f"steer_sweep_{args.variant}.json"
+    if out.exists():
+        print(f"[skip] sweep already done: {out}")
+        return
     data_dir = args.data_dir or args.items.parent
     items = [it for it in read_jsonl(args.items) if it["split"] == "calib"][: args.limit]
     vecs = np.load(args.vectors)
@@ -51,7 +55,6 @@ def main() -> None:
             results.append({"layer": layer, "alpha": alpha, "accs": accs, "mean": float(np.mean(list(accs.values())))})
             print(f"layer {layer:2d} alpha {alpha:4.1f}: mean acc {results[-1]['mean']:.3f}  {accs}")
     best = max(results, key=lambda r: r["mean"])
-    out = args.vectors.parent / f"steer_sweep_{args.variant}.json"
     out.write_text(json.dumps({"best": best, "all": results}, indent=1))
     print(f"best: layer {best['layer']} alpha {best['alpha']} -> {out}")
 
