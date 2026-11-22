@@ -79,14 +79,17 @@ def test_diagnose_end_to_end(tmp_path, monkeypatch):
         base = rng.normal(size=(N, L, d)).astype(np.float32)
         gold = rng.choice(list("ABCD"), N)
         D = tmp_path / split
+        D.mkdir()
         for c in conds:
             x = base.copy()
             if c != "en":
                 x[:, 3:5] += rng.normal(scale=3.0, size=(N, 2, d))
-            np.save(D / f"resid_{c}.npy" if D.exists() else (D.mkdir() or D / f"resid_{c}.npy"), x.astype(np.float16))
-            np.savez(D / f"lens_{c}.npz", p_gold=rng.random((N, L)), top_is_gold=rng.random((N, L)) > 0.5)
-            np.save(D / f"var_{c}.npy", rng.random((N, L)))
-            write_jsonl(D / f"preds_{c}.jsonl", [{"id": f"i{i}", "gold": g, "pred": g if rng.random() < 0.6 else "A"} for i, g in enumerate(gold)])
+            keep = [i for i in range(N) if not (c == "ta-pure" and i in (5, 17))]  # filtered items, as with MT
+            x, lens_n = x[keep], len(keep)
+            np.save(D / f"resid_{c}.npy", x.astype(np.float16))
+            np.savez(D / f"lens_{c}.npz", p_gold=rng.random((lens_n, L)), top_is_gold=rng.random((lens_n, L)) > 0.5)
+            np.save(D / f"var_{c}.npy", rng.random((lens_n, L)))
+            write_jsonl(D / f"preds_{c}.jsonl", [{"id": f"i{i}", "gold": gold[i], "pred": gold[i] if rng.random() < 0.6 else "A"} for i in keep])
     monkeypatch.setattr("sys.argv", ["diagnose", "--test-dir", str(tmp_path / "test"), "--calib-dir", str(tmp_path / "calib"), "--variant", "pure"])
     diagnose.main()
     import csv

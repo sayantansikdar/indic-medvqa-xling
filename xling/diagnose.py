@@ -23,6 +23,8 @@ from .stats import bootstrap_ci, linear_cka
 
 
 def load_run(d: Path, conds: list[str]):
+    """Load caches and keep only items present in every condition (the back-translation filter
+    drops a few items per language), in English order, so row i is the same item everywhere."""
     R, P, lens, var = {}, {}, {}, {}
     for c in conds:
         R[c] = np.load(d / f"resid_{c}.npy", mmap_mode="r")
@@ -30,9 +32,16 @@ def load_run(d: Path, conds: list[str]):
         z = np.load(d / f"lens_{c}.npz")
         lens[c] = (z["p_gold"], z["top_is_gold"])
         var[c] = np.load(d / f"var_{c}.npy")
-    ids = [p["id"] for p in P["en"]]
+    present = [{p["id"] for p in P[c]} for c in conds]
+    common = [p["id"] for p in P["en"] if all(p["id"] in s for s in present)]
     for c in conds:
-        assert [p["id"] for p in P[c]] == ids, f"item order differs for {c}"
+        pos = {p["id"]: i for i, p in enumerate(P[c])}
+        idx = np.array([pos[i] for i in common])
+        R[c] = np.asarray(R[c][idx])
+        P[c] = [P[c][i] for i in idx]
+        lens[c] = (lens[c][0][idx], lens[c][1][idx])
+        var[c] = var[c][idx]
+    print(f"{d.name if d.name != 'base' else d.parent.name}: {len(common)} items present in all of {conds}")
     return R, P, lens, var
 
 

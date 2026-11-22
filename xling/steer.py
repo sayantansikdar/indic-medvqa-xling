@@ -45,7 +45,8 @@ def main() -> None:
             accs = {}
             for cond in conds:
                 v = torch.tensor(vecs[cond][layer], device=vlm.device)
-                preds = run_condition(vlm, items, cond, data_dir, run_args, v)[0]
+                its = [it for it in items if cond in it["text"]]
+                preds = run_condition(vlm, its, cond, data_dir, run_args, v)[0]
                 accs[cond] = float(np.mean([p["pred"] == p["gold"] for p in preds]))
             results.append({"layer": layer, "alpha": alpha, "accs": accs, "mean": float(np.mean(list(accs.values())))})
             print(f"layer {layer:2d} alpha {alpha:4.1f}: mean acc {results[-1]['mean']:.3f}  {accs}")
