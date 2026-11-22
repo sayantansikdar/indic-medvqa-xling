@@ -124,6 +124,14 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     conds = conditions_of(items, args.conds.split(",") if args.conds else None)
 
+    def finished(cond):
+        n = sum(cond in it["text"] for it in items)
+        pred_path = out / f"preds_{cond}.jsonl"
+        return pred_path.exists() and len(read_jsonl(pred_path)) == n and (not args.capture or (out / f"resid_{cond}.npy").exists())
+
+    if all(finished(c) for c in conds):
+        print(f"[skip] all conditions already done in {out}")
+        return
     vlm = load(args.model, quant=args.quant, attn="eager" if args.capture else "sdpa", adapter=args.adapter)
     steer_vecs = np.load(args.steer_file) if args.steer_file else None
     (out / "config.json").write_text(json.dumps({**vars(args), "conds": conds, "n_items": len(items), "n_layers": vlm.n_layers}, default=str, indent=2))
@@ -131,7 +139,7 @@ def main() -> None:
     for cond in conds:
         its = [it for it in items if cond in it["text"]]
         pred_path = out / f"preds_{cond}.jsonl"
-        if pred_path.exists() and len(read_jsonl(pred_path)) == len(its) and (not args.capture or (out / f"resid_{cond}.npy").exists()):
+        if finished(cond):
             print(f"[skip] {cond} already done")
             continue
         sv = None
