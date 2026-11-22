@@ -126,8 +126,18 @@ def main() -> None:
             add("drift_raw", c, l, m, lo, hi)
             m, lo, hi = bootstrap_ci(1 - cos_rows(en[:, l] - mu[l], tg[:, l] - mu[l]))
             add("drift_centred", c, l, m, lo, hi)
+            # each language's own mean removed: compares item content, not the language offset
+            m, lo, hi = bootstrap_ci(1 - cos_rows(en[:, l] - en[:, l].mean(0), tg[:, l] - tg[:, l].mean(0)))
+            add("drift_langcentred", c, l, m, lo, hi)
             add("cka", c, l, linear_cka(en[:, l], tg[:, l]))
             add("norm_ratio", c, l, float(np.linalg.norm(tg[:, l], axis=-1).mean() / np.linalg.norm(en[:, l], axis=-1).mean()))
+    # share of the variance across all five languages that is explained by language identity
+    for l in range(L):
+        X = np.stack([np.asarray(Rt[c][:, l], dtype=np.float32) for c in conds])  # (C, N, d)
+        grand = X.mean((0, 1))
+        between = ((X.mean(1) - grand) ** 2).sum(-1).mean()
+        total = ((X - grand) ** 2).sum(-1).mean()
+        add("lang_var_share", "all", l, float(between / total))
 
     # B2: language-ID probe and answer-probe transfer -------------------------
     print("B2 probes (PCA-128 + logistic regression per layer)")
@@ -154,10 +164,15 @@ def main() -> None:
         p_gold, top = lens_t[c]
         for l in range(p_gold.shape[1]):
             add("lens_p_gold", c, l, float(p_gold[:, l].mean()))
-        both_right = np.array([pe["pred"] == pe["gold"] for pe in Pt["en"]])
+        en_right = np.array([pe["pred"] == pe["gold"] for pe in Pt["en"]])
+        c_right = np.array([pe["pred"] == pe["gold"] for pe in Pt[c]])
         em = emergence_layer(top.astype(bool))
-        m, lo, hi = bootstrap_ci(em[both_right])
-        add("emergence_layer_on_en_correct", c, -1, m, lo, hi)
+        m, lo, hi = bootstrap_ci(em[en_right])
+        add("emergence_layer_on_en_correct", c, -1, m, lo, hi)  # wrong answers count as layer L
+        both = en_right & c_right
+        if both.sum() >= 10:
+            m, lo, hi = bootstrap_ci(em[both])
+            add("emergence_layer_on_both_correct", c, -1, m, lo, hi)  # timing only, accuracy removed
 
     # B4: visual-attention ratio --------------------------------------------
     print("B4 visual attention")

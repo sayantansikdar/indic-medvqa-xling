@@ -97,6 +97,9 @@ def test_diagnose_end_to_end(tmp_path, monkeypatch):
     rows = list(csv.DictReader(open(tmp_path / "test" / "diagnosis_pure.csv")))
     drift = {int(r["layer"]): float(r["value"]) for r in rows if r["metric"] == "drift_centred" and r["cond"] == "hi-pure"}
     assert max(drift, key=drift.get) in (3, 4) and drift[0] < 1e-3
+    share = {int(r["layer"]): float(r["value"]) for r in rows if r["metric"] == "lang_var_share"}
+    assert max(share, key=share.get) in (3, 4) and share[0] < 1e-3
+    assert any(r["metric"] == "drift_langcentred" for r in rows)
     assert set(np.load(tmp_path / "calib" / "steer_pure.npz").files) == {"hi-pure", "bn-pure", "ta-pure", "te-pure"}
 
 
