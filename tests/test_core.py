@@ -108,3 +108,24 @@ def test_bf16_cache_keeps_large_activations():
     y = from_bf16_bits(to_bf16_bits(x))
     assert np.isfinite(y).all()
     np.testing.assert_allclose(y, x, rtol=1 / 128)
+
+
+def test_band_cli_reports_frozen_band_on_test(tmp_path, monkeypatch, capsys):
+    from xling import band
+
+    L = 10
+    def recs(peak):
+        win = [0.1 + (0.8 if s in peak else 0.0) for s in range(L - 3)]
+        return [{"p_en": 0.9, "p_tg": 0.1, "modes": {"win4": win, "ctl-win6": [0.15] * (L - 5)}} for _ in range(30)]
+    for split, peak in (("calib", (4,)), ("test", (3, 4))):
+        d = tmp_path / split / "patching"
+        d.mkdir(parents=True)
+        write_jsonl(d / "patch_hi-mt.jsonl", recs(peak))
+        write_jsonl(d / "patch_ta-mt.jsonl", recs(peak))
+    for split in ("calib", "test"):
+        monkeypatch.setattr("sys.argv", ["band", "--patch-dir", str(tmp_path / split / "patching"), "--plot"])
+        band.main()
+    out = capsys.readouterr().out
+    assert "frozen calib band B* = layers 4-7" in out and "H2 SUPPORTED" in out
+    saved = json.loads((tmp_path / "test" / "patching" / "band.json").read_text())
+    assert saved["h2_frozen_band"]["band"]["layers"] == [4, 5, 6, 7]

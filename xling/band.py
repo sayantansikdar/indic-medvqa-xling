@@ -69,14 +69,30 @@ def main() -> None:
         curves = {m: recovery(recs, m) for m in modes}
         curves = {m: c for m, c in curves.items() if c}
         summary[g] = {"curves": curves, "band": select_band(curves)}
-    out = args.out or args.patch_dir / "band.json"
-    out.write_text(json.dumps(summary, indent=1))
     for g, s in summary.items():
         b = s["band"]
         n = next(iter(s["curves"].values()))["n"] if s["curves"] else 0
         print(f"{g:>12} (n={n}): " + (f"B* = layers {b['layers'][0]}-{b['layers'][-1]}  R={b['R']:.2f} [{b['lo']:.2f}, {b['hi']:.2f}]" if b else "no window modes"))
         if "ctl-win6" in s["curves"] and "win6" in s["curves"]:
             print(f"{'':>12}  win6 max R={max(s['curves']['win6']['R']):.2f}  vs mismatched-donor control max R={max(s['curves']['ctl-win6']['R']):.2f}")
+
+    # Pre-registered H2 check on a held-out split, for the band frozen on calib
+    frozen = args.patch_dir.parent.parent / "calib" / "patching" / "band.json"
+    if args.patch_dir.parent.name != "calib" and frozen.exists():
+        b = json.loads(frozen.read_text())["pooled"]["band"]
+        mode, start = f"win{b['width']}", b["layers"][0]
+        print(f"\nH2 check on this split for the frozen calib band B* = layers {b['layers'][0]}-{b['layers'][-1]}")
+        for g in ("pooled", "indo-aryan", "dravidian"):
+            cv = summary.get(g, {}).get("curves", {})
+            if mode not in cv:
+                continue
+            r, lo, hi = cv[mode]["R"][start], cv[mode]["lo"][start], cv[mode]["hi"][start]
+            med = float(np.median(cv[mode]["R"]))
+            ctl = max(cv["ctl-win6"]["R"]) if "ctl-win6" in cv else float("nan")
+            ok = r >= 0.5 and r >= 2 * ctl and r >= 2 * med
+            print(f"{g:>12}: R(B*)={r:.2f} [{lo:.2f}, {hi:.2f}]  median window={med:.2f}  control max={ctl:.2f}  "
+                  f"-> H2 {'SUPPORTED' if ok else 'NOT supported'} (R>=0.5, >=2x control, >=2x median)")
+        summary["h2_frozen_band"] = {"band": b, "mode": mode}
 
     # recovery curves (every 2nd layer / window start) for the pooled and family groups
     for g in ("pooled", "indo-aryan", "dravidian"):
@@ -90,10 +106,15 @@ def main() -> None:
         for l in range(0, n, 2):
             print(f"{l:>5} " + " ".join(f"{cv[m]['R'][l]:>8.2f}" if l < len(cv[m]["R"]) else f"{'':>8}" for m in names))
 
+    out = args.out or args.patch_dir / "band.json"
+    out.write_text(json.dumps(summary, indent=1))
+
     if args.plot:
         import matplotlib.pyplot as plt
 
         for g, s in summary.items():
+            if "curves" not in s:
+                continue
             fig, ax = plt.subplots(figsize=(7, 3.5))
             for m, c in s["curves"].items():
                 x = np.arange(len(c["R"]))
