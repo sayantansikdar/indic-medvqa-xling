@@ -1,7 +1,7 @@
 # torch comes preinstalled on Colab (CUDA build); do not reinstall it there.
 transformers>=5.0,<6
 accelerate>=1.0
-peft>=0.17
+peft>=0.22  # older PEFT raises on the old torchao that Colab preinstalls
 bitsandbytes>=0.45
 datasets>=3.0
 huggingface_hub

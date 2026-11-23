@@ -98,3 +98,22 @@ def test_window_patching_chunked_equals_unchunked(vlm):
     # a window covering every layer yields a single row
     _, all_layers = run_mode(vlm, inputs, f"win{vlm.n_layers}", donors, list("ABCD"), "B", batch=4)
     assert len(all_layers) == 1
+
+
+def test_band_lora_trains_only_band_layers(vlm):
+    """The Phase C path: LoRA on the chosen decoder layers only, gradient through the band states."""
+    peft = pytest.importorskip("peft")
+    from xling.train import FinalStates, target_module_names
+
+    band = [1, 2]
+    names = target_module_names(vlm, band, with_mlp=False)
+    model = peft.get_peft_model(vlm.model, peft.LoraConfig(r=4, lora_alpha=8, target_modules=names))
+    trainable = [n for n, p in model.named_parameters() if p.requires_grad]
+    assert trainable and all(any(f"layers.{i}." in n for i in band) for n in trainable)
+    v = VLM(model, FakeProc())
+    hooks = FinalStates(v, band)
+    out = model(input_ids=torch.randint(0, 64, (1, 7)), logits_to_keep=1)
+    loss = out.logits[:, -1].float().logsumexp(-1).mean() + sum(h.pow(2).mean() for h in hooks.store.values())
+    loss.backward()
+    assert all(p.grad is not None for n, p in model.named_parameters() if p.requires_grad and "lora_B" in n)
+    hooks.remove()
