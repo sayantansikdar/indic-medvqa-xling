@@ -129,3 +129,21 @@ def test_band_cli_reports_frozen_band_on_test(tmp_path, monkeypatch, capsys):
     assert "frozen calib band B* = layers 4-7" in out and "H2 SUPPORTED" in out
     saved = json.loads((tmp_path / "test" / "patching" / "band.json").read_text())
     assert saved["h2_frozen_band"]["band"]["layers"] == [4, 5, 6, 7]
+
+
+def test_centred_alignment_sees_content_that_raw_cosine_misses():
+    """Gemma-like states: a few huge shared dimensions make raw cosine ~1 for any pair."""
+    import torch
+
+    from xling.train import align_loss
+
+    g = torch.Generator().manual_seed(0)
+    shared = torch.zeros(4, 64)
+    shared[:, :2] = 3000.0  # massive activation dimensions, identical across inputs
+    anchors = shared + torch.randn(50, 4, 64, generator=g)  # English anchors for 50 items
+    mean = anchors.mean(0)
+    a = anchors[0]
+    h_same, h_other = a + 0.05 * torch.randn(4, 64, generator=g), anchors[1]  # same item vs a different item
+    assert align_loss(h_other, a, None) < 1e-3  # raw: a different item already looks "aligned"
+    assert align_loss(h_other, a, mean) > 2.0  # centred: clearly misaligned
+    assert align_loss(h_same, a, mean) < 0.1

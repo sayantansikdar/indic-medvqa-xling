@@ -63,6 +63,13 @@ def choose_layers(args, L: int) -> tuple[list[int], list[int]]:
     raise ValueError(args.placement)
 
 
+def align_loss(h: torch.Tensor, a: torch.Tensor, mean: torch.Tensor | None) -> torch.Tensor:
+    """sum over band layers of 1 - cos(h, a); with `mean`, both are centred on the mean English anchor first."""
+    if mean is not None:
+        h, a = h - mean, a - mean
+    return (1 - F.cosine_similarity(h, a, dim=-1)).sum()
+
+
 class FinalStates:
     """Forward hooks that keep (with grad) the final-position residual after selected layers."""
 
@@ -94,6 +101,9 @@ def main() -> None:
     ap.add_argument("--match-budget", action="store_true", help="with --placement all, scale rank to the band's budget")
     ap.add_argument("--mlp", action="store_true", help="also adapt MLP projections (ablation A3)")
     ap.add_argument("--lam", type=float, default=0.5)
+    ap.add_argument("--align", choices=["centred", "raw"], default="centred",
+                    help="cosine after subtracting the mean English anchor (centred) or on raw states. Raw cosine is "
+                         "about 0.99 for any pair on Gemma 3 (a few huge shared dimensions), so it barely constrains anything.")
     ap.add_argument("--en-weight", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--epochs", type=float, default=1.0)
@@ -138,6 +148,7 @@ def main() -> None:
             with torch.no_grad(), capture_final(vlm, ["resid"]) as st:
                 vlm.model(**build(it, "en"), use_cache=False, logits_to_keep=1)
             anchors[it["id"]] = torch.stack([st["resid"][l][0] for l in align]).cpu()
+    anchor_mean = torch.stack(list(anchors.values())).float().mean(0).to(vlm.device) if anchors else None  # (|B|, d)
 
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
@@ -177,17 +188,17 @@ def main() -> None:
         ce_tg = F.cross_entropy(out.logits[:, -1].float(), target)
         loss = ce_tg
         if lam > 0:
-            a = anchors[it["id"]].to(vlm.device)
-            h = torch.stack([hooks.store[l][0] for l in align])
-            al = (1 - F.cosine_similarity(h.float(), a.float(), dim=-1)).sum()
+            a = anchors[it["id"]].to(vlm.device).float()
+            h = torch.stack([hooks.store[l][0] for l in align]).float()
+            al = align_loss(h, a, anchor_mean if args.align == "centred" else None)
             loss = loss + lam * al
-            log["align"] += float(al)
+            log["align"] += al.item()
         if args.en_weight > 0:
             out_en = model(**build(it, "en"), use_cache=False, logits_to_keep=1)
             ce_en = F.cross_entropy(out_en.logits[:, -1].float(), target)
             loss = loss + args.en_weight * ce_en
-            log["ce_en"] += float(ce_en)
-        log["ce_tg"] += float(ce_tg)
+            log["ce_en"] += ce_en.item()
+        log["ce_tg"] += ce_tg.item()
         (loss / args.accum).backward()
         if (step + 1) % args.accum == 0:
             torch.nn.utils.clip_grad_norm_(params, 1.0)
