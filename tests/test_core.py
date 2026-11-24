@@ -176,3 +176,34 @@ def test_centred_alignment_sees_content_that_raw_cosine_misses():
     assert align_loss(h_other, a, None) < 1e-3  # raw: a different item already looks "aligned"
     assert align_loss(h_other, a, mean) > 2.0  # centred: clearly misaligned
     assert align_loss(h_same, a, mean) < 0.1
+
+
+def test_position_cli(tmp_path, monkeypatch, capsys):
+    """A mid-network band that loses 20 points is reported with its layers; B* is flagged; plot is written."""
+    from xling import position
+
+    root, tr = tmp_path / "eval", tmp_path / "train"
+    runs = {"base": None, "bstar": ([23, 24, 25, 26], "band", "band.json", 0),
+            "mid": ([12, 13, 14, 15], "band", None, 0), "all": (list(range(34)), "all", None, 0)}
+    for tag, spec in runs.items():
+        (root / tag).mkdir(parents=True)
+        drop = 20 if tag in ("mid", "all") else 0
+        for cond in ["en", "hi-mt", "ta-mt"]:
+            n_right = 60 - (drop if cond != "en" else 0)
+            write_jsonl(root / tag / f"preds_{cond}.jsonl",
+                        [{"id": f"q{i}", "pred": "A" if i < n_right else "B", "gold": "A", "probs": [0.6, 0.4],
+                          "letter_mass": 1.0, "fertility": 1.0} for i in range(100)])
+        if spec:
+            (tr / tag).mkdir(parents=True)
+            layers, placement, band_json, seed = spec
+            (tr / tag / "train_config.json").write_text(json.dumps(
+                {"adapted_layers": layers, "placement": placement, "band_json": band_json, "seed": seed}))
+    monkeypatch.setattr("sys.argv", ["position", "--root", str(root), "--train-dir", str(tr),
+                                     "--runs", "bstar,mid,all", "--plot"])
+    position.main()
+    out = capsys.readouterr().out
+    assert "<- B*" in out and " 12-15" in out
+    rows = {r["run"]: r for r in __import__("csv").DictReader(open(root / "position_mt.csv"))}
+    assert float(rows["bstar"]["delta"]) == 0.0 and rows["bstar"]["diagnosed"] == "True"
+    assert float(rows["mid"]["delta"]) == pytest.approx(-0.20) and float(rows["mid"]["p_holm"]) < 1e-3
+    assert rows["all"]["width"] == "34" and (root / "position_mt.png").exists()
