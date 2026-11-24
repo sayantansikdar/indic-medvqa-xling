@@ -118,6 +118,7 @@ def main() -> None:
         return
     set_seed(args.seed)
     args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "train_log.jsonl").unlink(missing_ok=True)  # a restarted run starts its log afresh
     data_dir = args.data_dir or args.items.parent
 
     vlm = load(args.model, quant=args.quant, attn="sdpa")
@@ -206,6 +207,8 @@ def main() -> None:
             sched.step()
             opt.zero_grad(set_to_none=True)
             tqdm.write(f"step {step + 1}: " + "  ".join(f"{k}={v / args.accum:.4f}" for k, v in log.items()))
+            with open(args.out / "train_log.jsonl", "a") as f:
+                f.write(json.dumps({"step": step + 1, **{k: v / args.accum for k, v in log.items()}}) + "\n")
             log = dict.fromkeys(log, 0.0)
     model.save_pretrained(args.out)
     print(f"saved adapter -> {args.out}")

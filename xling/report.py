@@ -121,6 +121,7 @@ def main() -> None:
     ap.add_argument("--runs", default="", help="comma-separated run tags to compare against --base")
     ap.add_argument("--exclude-sources", default="", help="comma-separated item sources to leave out")
     ap.add_argument("--compare", default="", help="paired run-vs-run tests instead of the report, e.g. ours_c:random_band_c,ours_c:all_layers")
+    ap.add_argument("--name", default="paired", help="file stem for --compare output (<name><suffix>.md/.csv)")
     args = ap.parse_args()
     exclude = set(filter(None, args.exclude_sources.split(",")))
     suffix = "_excl-" + "-".join(sorted(exclude)) if exclude else ""
@@ -132,9 +133,9 @@ def main() -> None:
             rows = compare(load_preds(args.root / ta, exclude), load_preds(args.root / tb, exclude))
             md.append(fmt_compare(rows, f"{ta} (A) vs {tb} (B)"))
             all_rows += [{"a": ta, "b": tb, **r} for r in rows]
-        (args.root / f"paired{suffix}.md").write_text("\n".join(md))
+        (args.root / f"{args.name}{suffix}.md").write_text("\n".join(md))
         keys = sorted({k for r in all_rows for k in r}, key=lambda k: (k not in ("a", "b"), k != "cond", k))
-        with open(args.root / f"paired{suffix}.csv", "w", newline="") as f:
+        with open(args.root / f"{args.name}{suffix}.csv", "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
             w.writerows(all_rows)
