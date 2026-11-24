@@ -6,7 +6,7 @@ import pytest
 from xling.band import recovery, select_band
 from xling.common import from_bf16_bits, resid_path, script_share, to_bf16_bits, write_jsonl
 from xling.data import split_of, strip_gloss
-from xling.stats import ece, gap_recovery_ratio, holm, linear_cka, mcnemar
+from xling.stats import ece, gap_recovery_ratio, holm, linear_cka, mcnemar, sign_flip
 
 
 def test_strip_gloss_removes_english_parentheses_only():
@@ -53,6 +53,35 @@ def test_paired_stats():
     assert adj["hi"] == pytest.approx(0.04) and adj["ta"] == pytest.approx(0.09) and adj["te"] == pytest.approx(0.5)
     assert ece([0.9] * 10, [1] * 9 + [0]) == pytest.approx(0.0)
     assert gap_recovery_ratio(0.55, 0.40, 0.70) == pytest.approx(0.5)
+
+
+def test_sign_flip():
+    assert sign_flip(np.zeros(50)) == 1.0
+    assert sign_flip(np.r_[np.ones(40), np.zeros(60)]) < 1e-3
+    assert sign_flip(np.r_[np.ones(20), -np.ones(20)]) > 0.9
+
+
+def test_report_compare_cli(tmp_path, monkeypatch, capsys):
+    """Run A beats B on every Hindi/Tamil item B misses; pooled row averages per item over languages."""
+    from xling import report
+
+    for tag, extra in [("a", 30), ("b", 0)]:
+        d = tmp_path / tag
+        d.mkdir()
+        for cond in ["en", "hi-mt", "ta-mt", "hi-mixed"]:
+            n_right = 50 + (extra if cond != "en" else 0)
+            write_jsonl(d / f"preds_{cond}.jsonl",
+                        [{"id": f"q{i}", "pred": "A" if i < n_right else "B", "gold": "A", "probs": [0.6, 0.4],
+                          "letter_mass": 1.0, "fertility": 1.0, "source": "x"} for i in range(100)])
+    monkeypatch.setattr("sys.argv", ["report", "--root", str(tmp_path), "--compare", "a:b"])
+    report.main()
+    out = capsys.readouterr().out
+    assert "a (A) vs b (B)" in out and "mt (pooled)" in out and "mixed (pooled)" in out
+    rows = {r["cond"]: r for r in __import__("csv").DictReader(open(tmp_path / "paired.csv"))}
+    assert float(rows["en"]["delta"]) == 0.0 and rows["en"]["p_holm"] == ""
+    assert float(rows["hi-mt"]["delta"]) == pytest.approx(0.30) and float(rows["hi-mt"]["p_holm"]) < 1e-6
+    assert int(rows["mt (pooled)"]["n"]) == 100 and float(rows["mt (pooled)"]["delta"]) == pytest.approx(0.30)
+    assert float(rows["mt (pooled)"]["p_perm"]) < 1e-3
 
 
 def test_band_selection_and_ratio_of_sums():

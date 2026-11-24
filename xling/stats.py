@@ -33,6 +33,16 @@ def mcnemar(correct_a, correct_b) -> float:
     return float(binomtest(n01, n01 + n10, 0.5).pvalue)
 
 
+def sign_flip(diffs, n_perm: int = 10000, seed: int = 0) -> float:
+    """Two-sided paired permutation p-value for mean(diffs) == 0 (random sign flips)."""
+    d = np.asarray(diffs, float)
+    if not d.any():
+        return 1.0
+    rng = np.random.default_rng(seed)
+    null = np.abs((rng.choice([-1.0, 1.0], size=(n_perm, len(d))) * d).mean(1))
+    return float(((null >= abs(d.mean()) - 1e-12).sum() + 1) / (n_perm + 1))
+
+
 def holm(pvals: dict[str, float]) -> dict[str, float]:
     keys = sorted(pvals, key=pvals.get)
     m, out, running = len(keys), {}, 0.0
