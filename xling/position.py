@@ -23,16 +23,19 @@ def main() -> None:
     ap.add_argument("--base", default="base")
     ap.add_argument("--runs", required=True)
     ap.add_argument("--variant", default="mt")
+    ap.add_argument("--exclude-sources", default="", help="comma-separated item sources to leave out")
     ap.add_argument("--n-layers", type=int, default=34)
     ap.add_argument("--plot", action="store_true")
     args = ap.parse_args()
+    exclude = set(filter(None, args.exclude_sources.split(",")))
+    suffix = "_excl-" + "-".join(sorted(exclude)) if exclude else ""
 
-    base = load_preds(args.root / args.base)
+    base = load_preds(args.root / args.base, exclude)
     rows = []
     for tag in args.runs.split(","):
         cfg = json.loads((args.train_dir / tag / "train_config.json").read_text())
         layers = cfg["adapted_layers"]
-        pooled = next(r for r in compare(load_preds(args.root / tag), base) if r["cond"] == f"{args.variant} (pooled)")
+        pooled = next(r for r in compare(load_preds(args.root / tag, exclude), base) if r["cond"] == f"{args.variant} (pooled)")
         rows.append({"run": tag, "start": min(layers), "end": max(layers), "width": len(layers), "seed": cfg["seed"],
                      "diagnosed": cfg["placement"] == "band" and bool(cfg.get("band_json")),
                      "delta": pooled["delta"], "delta_lo": pooled["delta_lo"], "delta_hi": pooled["delta_hi"],
@@ -41,11 +44,11 @@ def main() -> None:
         next(r for r in rows if r["run"] == tag)["p_holm"] = p
     rows.sort(key=lambda r: (r["width"], r["start"], r["seed"]))
 
-    with open(args.root / f"position_{args.variant}.csv", "w", newline="") as f:
+    with open(args.root / f"position_{args.variant}{suffix}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    print(f"{args.variant} (pooled) accuracy change vs {args.base}, by adapted layers")
+    print(f"{args.root.parent.name}{suffix}: {args.variant} (pooled) accuracy change vs {args.base}, by adapted layers")
     print(f"{'run':18s} {'layers':>8s} seed  {'delta':>7s}  95% CI              p_holm")
     for r in rows:
         star = "  <- B*" if r["diagnosed"] else ""
@@ -69,11 +72,12 @@ def main() -> None:
         ax.plot([], [], "o", color="tab:orange", label="diagnosed band B*")
         ax.plot([], [], "o", color="tab:blue", label="other bands")
         ax.plot([], [], "o", color="k", mfc="white", label="seed 1")
+        title = args.root.parent.name + (f" (without {', '.join(sorted(exclude))})" if exclude else "")
         ax.set(xlim=(-1, args.n_layers), xlabel="adapted layers (bar = band extent)",
-               ylabel=f"{args.variant} accuracy change vs {args.base}", title=args.root.parent.name)
+               ylabel=f"{args.variant} accuracy change vs {args.base}", title=title)
         ax.legend(fontsize=7)
         fig.tight_layout()
-        fig.savefig(args.root / f"position_{args.variant}.png", dpi=150)
+        fig.savefig(args.root / f"position_{args.variant}{suffix}.png", dpi=150)
         plt.close(fig)
 
 

@@ -207,3 +207,7 @@ def test_position_cli(tmp_path, monkeypatch, capsys):
     assert float(rows["bstar"]["delta"]) == 0.0 and rows["bstar"]["diagnosed"] == "True"
     assert float(rows["mid"]["delta"]) == pytest.approx(-0.20) and float(rows["mid"]["p_holm"]) < 1e-3
     assert rows["all"]["width"] == "34" and (root / "position_mt.png").exists()
+    monkeypatch.setattr("sys.argv", ["position", "--root", str(root), "--train-dir", str(tr),
+                                     "--runs", "bstar,mid", "--exclude-sources", "X"])
+    position.main()
+    assert (root / "position_mt_excl-X.csv").exists()
